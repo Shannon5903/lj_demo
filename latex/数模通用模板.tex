@@ -14,18 +14,30 @@
 \newcolumntype{L}{>{\raggedright\arraybackslash}X}\renewcommand{\textbf}[1]{{\song\bfseries #1}}
 
 \usepackage{tikz}
-\usetikzlibrary{shapes.geometric, arrows.meta, positioning}
-
+\usetikzlibrary{
+    shapes.geometric,
+    arrows.meta,
+    positioning,
+    calc,
+    angles,
+    quotes,
+    decorations.markings
+}
 \tikzstyle{startstop} = [rectangle, rounded corners, minimum width=3cm, minimum height=1cm,text centered, draw=black, fill=red!20]
 \tikzstyle{process} = [rectangle, minimum width=3.5cm, minimum height=1cm, text centered, draw=black, fill=blue!20]
 \tikzstyle{decision} = [diamond, aspect=2, minimum width=3.5cm, minimum height=1cm, text centered, draw=black, fill=green!20]
-\tikzstyle{arrow} = [thick,->,>=stealth]
-\usetikzlibrary{calc,angles,quotes}
+\tikzstyle{arrow} = [thick,->,>=stealth]\usetikzlibrary{calc,angles,quotes}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
+\usepackage{float}
 
-
-
+% 机器狗轨迹图颜色
+\definecolor{pathgray}{HTML}{3A3F44}
+\definecolor{startgreen}{HTML}{2CA02C}
+\definecolor{detectblue}{HTML}{1F77B4}
+\definecolor{clearred}{HTML}{D62728}
+\definecolor{missorange}{HTML}{FF7F0E}
+\definecolor{scanpurple}{HTML}{9467BD}
 
 
 
@@ -113,7 +125,7 @@
 \subsection{问题提出}
 现已知自动定位清除系统的检测原理和工作方式，以及干扰源的基本信息，本文需要解决以下问题：
 
-\textbf{问题1：}根据监测点位置、示向度及检测误差确定干扰源定位区域，计算其直径，并判断以该直径作圆能否覆盖整个定位区域。git pull origin main --allow-unrelated-histories  
+\textbf{问题1：}根据监测点位置、示向度及检测误差确定干扰源定位区域，计算其直径，并判断以该直径作圆能否覆盖整个定位区域。
 
 \textbf{问题2：}  根据第一监测点获得的位置与示向信息，确定第二监测点的合理位置，使两次测向形成的交会定位区域尽可能小，以提高定位精度，并便于后续扫描与清除。
 
@@ -141,10 +153,11 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 \section{问题分析}
 \subsection{问题一分析}
-问题一中，我们先将每个监测点的坐标、示向度和测向误差转化为直角坐标系中的角域约束，再通过多个角域求交，建立干扰源定位区域的几何模型。随后，将该定位区域表示为多边形，并利用程序枚举顶点对，求出最大顶点距离作为区域直径。最后以该直径构造候选圆，比较多边形各顶点到圆心的距离与圆半径，从而判断该圆能否完全覆盖定位区域。
+问题一中，本文先将每个监测点的坐标、示向度和测向误差转化为直角坐标系中的角域约束，再通过多个角域求交，建立干扰源定位区域的几何模型。随后，将该定位区域表示为多边形，并利用程序枚举顶点对，求出最大顶点距离作为区域直径。最后以该直径构造候选圆，比较多边形各顶点到圆心的距离与圆半径，从而判断该圆能否完全覆盖定位区域。
 \subsection{问题二分析}
-问题二中，我们结合问题一中交会定位法的结论和机器狗的激光扫描清除方式，将较优扫描区域转化为“定位区域直径较小”且“能够被有效覆盖”两项约束，并据此建立第二监测点选址的几何评价模型。对于平面上的每个候选监测点，统计其能够满足较优检测条件的目标数量，并据此进行评分，从而筛选出最优或较优的第二监测点区域。
-
+问题二中，本文结合问题一中交会定位法的结论和机器狗的激光扫描清除方式，将较优扫描区域转化为“定位区域直径较小”且“能够被有效覆盖”两项约束，并据此建立第二监测点选址的几何评价模型。对于平面上的每个候选监测点，统计其能够满足较优检测条件的目标数量，并据此进行评分，从而筛选出最优或较优的第二监测点区域。
+\subsection{问题三分析}
+问题三需要在实际约束下对机器狗的行为进行决策。在保证所有干扰源均被清除的前提下，同时考虑移动速度、检测时间和清除时间等因素，以最小化总任务时间。为此，本文将总耗时分解为不同任务的时间成本，分别分析其优化空间，并通过合理安排扫描位置、扫描时机和清除顺序，降低整体任务耗时。
 
 
 
@@ -853,15 +866,646 @@ x\in[-760,-220]\cup[220,760]\,\mathrm{m}.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% 
 \section{问题三的模型的建立和求解}
 \subsection{具体分析}
+在完成交会定位区域分析和第二检测点选择策略后，进一步将上述结论应用于更复杂的多干扰源搜索与清除问题。以任务总时间最短为优化目标，总耗时主要由\textbf{定位时间、移动时间和清除时间}组成。因此，问题可转化为：如何合理规划机器狗的动作顺序与运动路径，在保证所有干扰源均被清除的前提下，尽可能降低上述三部分耗时。
 
-\subsection{模型准备}
+由于一次扫描无法覆盖整个目标区域，机器狗需要在不同位置进行多次扫描，因此扫描时机和扫描位置本身就是路径优化的重要部分。对于已经发现的干扰源，为了获得较准确的位置，通常还需要进行第二次测向。根据第二问的结果，可以提前确定较优的第二检测区域，这既有助于缩短移动路程，也能提高一次定位成功的概率，从而减少后续扫描次数和检测时间。
 
-\subsection{模型建立}
+如果两次测向后的交会区域仍然较大，则需要继续补测。是否进行第三次扫描，可以根据第一问得到的定位区域大小和形状进行判断，相应的补测位置同样会影响后续路程。
+
+因此，机器狗在运行过程中实际上需要不断在继续扫描、移动到其他任务点以及前往目标进行光学定位和清除之间作出选择。综合上述因素，本文采用\textbf{基于滚动时域的在线动态重规划策略}：优先处理中心区域内距离较近的任务，并在移动过程中完成沿途的外围扫描与清除；每获得一次新的测量结果或清除结果，便立即更新当前信息并重新规划下一步。该策略既能保证搜索区域得到完整覆盖，又能尽可能减少大范围折返。由于机器狗的移动时间在总任务时间中占比较大，因此\textbf{路径长度是整个策略中最重要的优化对象}。
+\subsection{总体策略}
+为了利用半径为 $1000\,\mathrm{m}$ 的扫描区域覆盖半径为 $1800\,\mathrm{m}$ 的目标区域，机器狗必须在不同位置进行多次扫描。若在任务开始时单独规划区域覆盖路径，将产生较大的额外移动代价。因此，本文不将区域覆盖与目标清除分开处理，而是将扫描任务与后续的定位、清除任务相融合，尽量利用已有移动路径完成新区域的覆盖。
+
+基于上述思路，本文比较了两种搜索策略。第一种为\textbf{由内向外的滚动覆盖策略}：首先处理内圈目标；当机器狗在定位或清除过程中进入靠近外圈的扫描区域时，利用当前位置完成外围扫描，并继续处理外圈目标。第二种为\textbf{外围优先覆盖策略}：任务开始后直接前往外圈，通过多个扫描点的重叠实现目标区域的完整覆盖，同时就近清除已经发现的目标。
+
+测试结果表明，第一种策略的总用时明显更短。结合运行日志可知，其优势主要来源于对大范围折返的有效减少。由于任务点会随着新测量结果的获得而不断更新，第一种策略在滚动重规划过程中会自然形成近似由内向外扩展的螺旋式路径，使径向移动与扫描、定位及清除任务尽可能重合。虽然该路径在局部上存在一定绕行，但由于能够在同一段移动过程中完成多个任务，因此其整体移动距离和总任务时间反而更小。
+
+
+\begin{figure}[htbp]
+    \centering
+
+    %==================================================
+    % 左图：由内向外滚动覆盖策略
+    %==================================================
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \begin{tikzpicture}
+            \begin{axis}[
+                width=\linewidth,
+                height=1.02\linewidth,
+                axis equal image,
+                xmin=-2000,
+                xmax=1800,
+                ymin=-2050,
+                ymax=1900,
+                xlabel={$x/\mathrm{m}$},
+                ylabel={$y/\mathrm{m}$},
+                grid=both,
+                major grid style={
+                    dashed,
+                    gray!40,
+                    line width=0.25pt
+                },
+                axis lines=middle,
+                tick label style={font=\tiny},
+                label style={font=\scriptsize},
+                clip=false,
+                legend style={
+                    font=\tiny,
+                    at={(0.5,-0.16)},
+                    anchor=north,
+                    legend columns=2,
+                    draw=gray!50,
+                    fill=white,
+                    row sep=-1pt
+                }
+            ]
+
+            % 运动轨迹
+            \addplot[
+                pathgray,
+                line width=0.65pt,
+                postaction={decorate},
+                decoration={
+                    markings,
+                    mark=between positions 0.03 and 0.98 step 0.05 with {
+                        \arrow{Stealth}
+                    }
+                },
+                forget plot
+            ] coordinates {
+                (0,0)
+                (-422,-335)
+                (-86,-532)
+                (275,-463)
+                (72,-463)
+                (359,-868)
+                (224,-1000)
+                (-94,-1157)
+                (692,-1291)
+                (1161,-1331)
+                (-153,-1582)
+                (-359,-868)
+                (-460,-804)
+                (-868,-359)
+                (-1060,144)
+                (-1473,297)
+                (-1199,761)
+                (-1339,1163)
+                (-1336,1145)
+                (-359,868)
+                (-122,524)
+                (32,538)
+                (338,419)
+                (483,237)
+                (538,16)
+                (695,-255)
+                (868,-359)
+                (868,359)
+                (1226,761)
+                (1115,1040)
+                (706,782)
+                (694,756)
+                (688,743)
+                (359,868)
+                (241,781)
+                (313,973)
+                (171,1116)
+                (155,1075)
+                (-329,991)
+                (-348,1017)
+                (-798,1180)
+                (-466,1033)
+            };
+
+            % 运动轨迹图例
+            \addlegendimage{
+                pathgray,
+                line width=0.7pt,
+                -{Stealth}
+            }
+            \addlegendentry{运动轨迹}
+
+            % 原点
+            \addplot[
+                only marks,
+                mark=square*,
+                mark size=2.5pt,
+                startgreen
+            ] coordinates {(0,0)};
+            \addlegendentry{起点}
+
+            % 第二检测点
+            \addplot[
+                only marks,
+                mark=*,
+                mark size=1.7pt,
+                detectblue
+            ] coordinates {
+                (-422,-335)
+                (-86,-532)
+                (275,-463)
+                (-94,-1157)
+                (692,-1291)
+                (-1060,144)
+                (-1199,761)
+                (-122,524)
+                (32,538)
+                (338,419)
+                (483,237)
+                (538,16)
+                (1226,761)
+                (-798,1180)
+            };
+            \addlegendentry{第二检测点}
+
+            % 外围扫描点
+            \addplot[
+                only marks,
+                mark=diamond*,
+                mark size=2.3pt,
+                scanpurple
+            ] coordinates {
+                (359,-868)
+                (-359,-868)
+                (-868,-359)
+                (-359,868)
+                (868,-359)
+                (868,359)
+                (359,868)
+            };
+            \addlegendentry{外围扫描点}
+
+            % 清除未命中点
+            \addplot[
+                only marks,
+                mark=triangle*,
+                mark size=2.4pt,
+                mark options={
+                    draw=missorange,
+                    fill=white,
+                    line width=0.7pt
+                }
+            ] coordinates {
+                (-1339,1163)
+                (706,782)
+                (694,756)
+                (171,1116)
+                (-329,991)
+            };
+            \addlegendentry{清除未命中}
+
+            % 清除成功点
+            \addplot[
+                only marks,
+                mark=x,
+                mark size=2.8pt,
+                mark options={
+                    clearred,
+                    line width=1pt
+                }
+            ] coordinates {
+                (72,-463)
+                (224,-1000)
+                (1161,-1331)
+                (-153,-1582)
+                (-460,-804)
+                (-1473,297)
+                (-1336,1145)
+                (695,-255)
+                (1115,1040)
+                (688,743)
+                (241,781)
+                (313,973)
+                (155,1075)
+                (-348,1017)
+                (-466,1033)
+            };
+            \addlegendentry{清除成功}
+
+            % 频道编号
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:72,-463) {1};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:224,-1000) {18};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:1161,-1331) {11};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-153,-1582) {6};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-460,-804) {2};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1473,297) {20};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1336,1145) {7};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:695,-255) {17};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:1115,1040) {4};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:688,743) {15};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:241,781) {3};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:313,973) {12};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:155,1075) {5};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-348,1017) {19};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-466,1033) {16};
+
+            \end{axis}
+        \end{tikzpicture}
+
+        \caption{由内向外滚动覆盖策略}
+        \label{fig:inner-outer-route}
+    \end{subfigure}
+    \hfill
+    %==================================================
+    % 右图：外围优先覆盖策略
+    %==================================================
+    \begin{subfigure}[t]{0.49\textwidth}
+        \centering
+        \begin{tikzpicture}
+            \begin{axis}[
+                width=\linewidth,
+                height=1.02\linewidth,
+                axis equal image,
+                xmin=-2000,
+                xmax=1800,
+                ymin=-2050,
+                ymax=1900,
+                xlabel={$x/\mathrm{m}$},
+                ylabel={$y/\mathrm{m}$},
+                grid=both,
+                major grid style={
+                    dashed,
+                    gray!40,
+                    line width=0.25pt
+                },
+                axis lines=middle,
+                tick label style={font=\tiny},
+                label style={font=\scriptsize},
+                clip=false,
+                legend style={
+                    font=\tiny,
+                    at={(0.5,-0.16)},
+                    anchor=north,
+                    legend columns=2,
+                    draw=gray!50,
+                    fill=white,
+                    row sep=-1pt
+                }
+            ]
+
+            % 半径为1800 m的目标区域边界
+            \addplot[
+                gray,
+                dotted,
+                line width=0.6pt,
+                domain=0:360,
+                samples=180,
+                forget plot
+            ]
+            ({1800*cos(x)},{1800*sin(x)});
+
+            % 运动轨迹
+            \addplot[
+                pathgray,
+                line width=0.65pt,
+                postaction={decorate},
+                decoration={
+                    markings,
+                    mark=between positions 0.03 and 0.98 step 0.05 with {
+                        \arrow{Stealth}
+                    }
+                },
+                forget plot
+            ] coordinates {
+                (0,0)
+                (0,1000)
+                (-270,490)
+                (148,811)
+                (56,746)
+                (782,623)
+                (975,-223)
+                (1549,-601)
+                (1258,-328)
+                (1220,-442)
+                (434,-901)
+                (376,-560)
+                (-49,-711)
+                (-30,-609)
+                (821,-892)
+                (698,-932)
+                (842,-897)
+                (949,-1268)
+                (937,-1021)
+                (401,-1588)
+                (231,-1934)
+                (291,-1689)
+                (-434,-901)
+                (-975,-223)
+                (-1008,-523)
+                (-1027,-624)
+                (-1415,305)
+                (-1508,254)
+                (-782,623)
+                (-1165,438)
+                (-1121,822)
+                (-1087,587)
+                (-1186,654)
+                (-1246,830)
+                (-1061,936)
+                (-1048,1072)
+            };
+
+            % 运动轨迹图例
+            \addlegendimage{
+                pathgray,
+                line width=0.7pt,
+                -{Stealth}
+            }
+            \addlegendentry{运动轨迹}
+
+            % 起点
+            \addplot[
+                only marks,
+                mark=square*,
+                mark size=2.5pt,
+                startgreen
+            ] coordinates {(0,0)};
+            \addlegendentry{起点}
+
+            % 覆盖圆心
+            \addplot[
+                only marks,
+                mark=diamond*,
+                mark size=2.3pt,
+                scanpurple
+            ] coordinates {
+                (0,1000)
+                (782,623)
+                (975,-223)
+                (434,-901)
+                (-434,-901)
+                (-975,-223)
+                (-782,623)
+            };
+            \addlegendentry{覆盖圆心}
+
+            % 检测点
+            \addplot[
+                only marks,
+                mark=*,
+                mark size=1.7pt,
+                detectblue
+            ] coordinates {
+                (0,1000)
+                (-270,490)
+                (782,623)
+                (975,-223)
+                (1549,-601)
+                (1258,-328)
+                (434,-901)
+                (376,-560)
+                (-49,-711)
+                (821,-892)
+                (842,-897)
+                (949,-1268)
+                (401,-1588)
+                (231,-1934)
+                (-434,-901)
+                (-975,-223)
+                (-1008,-523)
+                (-1415,305)
+                (-782,623)
+                (-1165,438)
+                (-1121,822)
+                (-1186,654)
+                (-1061,936)
+            };
+            \addlegendentry{检测点}
+
+            % 清除成功点
+            \addplot[
+                only marks,
+                mark=x,
+                mark size=2.8pt,
+                mark options={
+                    clearred,
+                    line width=1pt
+                }
+            ] coordinates {
+                (148,811)
+                (56,746)
+                (1220,-442)
+                (-30,-609)
+                (698,-932)
+                (937,-1021)
+                (291,-1689)
+                (-1027,-624)
+                (-1508,254)
+                (-1087,587)
+                (-1246,830)
+                (-1048,1072)
+            };
+            \addlegendentry{清除成功}
+
+            % 频道编号
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:148,811) {19};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:56,746) {11};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:1220,-442) {6};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-30,-609) {5};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:698,-932) {10};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:937,-1021) {12};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:291,-1689) {15};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1027,-624) {20};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1508,254) {17};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1087,587) {3};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1246,830) {9};
+            \node[font=\tiny,clearred,above right]
+                at (axis cs:-1048,1072) {7};
+
+            \end{axis}
+        \end{tikzpicture}
+
+        \caption{外围优先覆盖策略}
+        \label{fig:outer-first-route}
+    \end{subfigure}
+
+    \caption{两种机器狗搜索与清除策略的运动轨迹对比}
+    \label{fig:route-comparison}
+\end{figure}
+
+
+
+
+\subsection{优化方式}
+\subsubsection{扫描优化}
+对于任一干扰源，通常至少需要进行两次测向，才能将其位置缩小至可进行光学定位和清除的范围。本文将用于发现目标的全频道扫描记为\textbf{A 类扫描}，将针对已发现目标进行的补充测向记为\textbf{B 类扫描}。
+
+若干扰源位于机器狗当前扫描点半径为 $1000\,\mathrm{m}$ 的有效探测范围内，则可在相应的 A 类扫描中获得第一次示向度。\textbf{内圈目标}通常在\textbf{原点的首次扫描中被发现}，外圈目标则在机器狗后续进入外圈或外围扫描点时被发现。对于尚未发现目标的频道，在后续 A 类扫描中继续进行检测，直至该频道被发现，或其可能存在的区域已被扫描范围完全覆盖。
+
+获得第一次示向度后，调用第二问的计算结果确定较优的第二监测区域，并从中选择具体位置作为\textbf{第二监测点}进行 B 类扫描。
+方法如下：
+第一次 A 类扫描得到示向度后，根据第二问确定第二检测点的较优区域 \(\Omega_{\mathrm{good}}\)。以第一次检测点 \(S_1\) 和示向角 \(\theta\) 建立局部坐标系，对任一候选点 \(P\)，定义前向距离和横向偏移为
+
+$$ d_f=(P-S_1)\cdot(\cos\theta,\sin\theta), $$ $$ d_l=(P-S_1)\cdot(-\sin\theta,\cos\theta). $$
+
+为保证交会几何条件，保留满足
+
+$$ 500\le d_f\le 900,\qquad |d_l|\ge 200 $$
+
+的候选点，即第二监测点既沿示向方向适当前进，又与原示向线保持一定横向距离，避免两次测向近似共线。
+
+随后在这些候选点中综合考虑移动距离和预测定位精度，构造评分函数
+
+$$ J(P)=d(P,P_{\mathrm{cur}})+\alpha D_{\mathrm{pred}}(P)+\beta d(P,G_{\mathrm{nom}}), $$
+
+最终取
+
+$$ P^*=\arg\min J(P) $$
+
+作为实际第二监测点。这样既保证了较好的交会定位效果，也兼顾了后续移动路程。
+
+完成第二次测向后，利用交会定位法计算定位区域，并将其直径记为 $D$。根据 $D$ 的大小，采取如下处理策略：
+\[
+\begin{cases}
+D\leq 40\,\mathrm{m}, 
+& \text{直接进入光学定位与清除阶段；}\\[2mm]
+40\,\mathrm{m}<D\leq 300\,\mathrm{m},
+& \text{先前往直径圆圆心尝试光学定位；}\\[2mm]
+D>300\,\mathrm{m},
+& \text{直接前往直径圆圆心进行B类扫描。}
+\end{cases}
+\]
+
+当 $D\leq 40\,\mathrm{m}$ 且以区域直径为直径的圆能够覆盖整个定位区域时，该圆半径不超过 $20\,\mathrm{m}$。因此，机器狗前往直径圆圆心后，即可满足光学探测范围要求。程序相应地将 $40\,\mathrm{m}$ 设置为精确定位阈值。
+
+对于 $40\,\mathrm{m}<D\leq 300\,\mathrm{m}$ 的情况，机器狗首先前往当前估计位置尝试进行光学定位。若能够发现目标，则直接完成清除；若未发现目标，则在当前位置进行一次新的 B 类扫描，并将新获得的示向度与此前的测量结果共同用于交会定位，从而进一步缩小目标的可行区域。
+
+为了完成\textbf{外圈的 A 类扫描}，本文设置了\textbf{黄区覆盖策略}，在保证不遗漏干扰源的同时，尽可能减少专程扫描所产生的额外移动路程。
+
+由于干扰源有效接收半径的下界为 $1000\,\mathrm{m}$，只要检测点与干扰源之间的距离不超过 $1000\,\mathrm{m}$，机器狗就一定能够接收到相应信号。为了覆盖半径为 $1800\,\mathrm{m}$ 的整个目标区域，本文在半径约为 $939\,\mathrm{m}$ 的圆周上设置 $8$ 个扫描中点，其极角分别为
+\[
+\theta_k
+=
+22.5^\circ+45^\circ k,
+\qquad
+k=0,1,\ldots,7.
+\]
+
+扫描中点所在圆周的半径由下式确定：
+\[
+a^2
+-2\times1800\cos 22.5^\circ\cdot a
++\left(1800^2-1000^2\right)
+=0.
+\]
+取该方程的较小正根，得到
+\[
+a\approx938.06\,\mathrm{m}.
+\]
+实际计算时，将扫描中点半径近似取为
+\[
+a\approx939\,\mathrm{m}.
+\]
+
+原点与上述 $8$ 个扫描中点分别作为扫描圆的圆心，各扫描圆半径均为 $1000\,\mathrm{m}$。这些扫描圆的并集能够覆盖半径为 $1800\,\mathrm{m}$ 的整个目标区域，从而保证搜索过程中不发生漏检。
+
+在实际执行过程中，这 $8$ 个扫描中点首先作为备用扫描航点加入动态任务池。如果机器狗在执行 B/C 类补充测向或清除任务时已经进入
+\[
+r\geq700\,\mathrm{m}
+\]
+的外围区域，并且在当前位置执行扫描能够补全某个尚未覆盖的扇区，则机器狗直接在当前位置完成 A 类扫描，同时跳过该扇区对应的备用扫描中点。通过这种处理，可以将全局覆盖过程尽可能融入原有的定位与清除路径中，从而减少为完成外围扫描而产生的额外移动。
+
+扇区覆盖状态采用离散采样方法进行判定。对于每个扇区，分别选取 $5$ 个径向采样位置和 $5$ 个角度采样位置，共得到
+\[
+5\times5=25
+\]
+个采样点。只有当该扇区内的全部采样点均落入已有扫描点的 $1000\,\mathrm{m}$ 探测范围内时，才判定该扇区已经完成覆盖。
+
+
+
+
+
+
+\subsubsection{任务选择优化}
+
+机器狗当前需要执行的任务可以统一划分为三类：A 类扫描、B/C 类补充测向，以及光学定位与清除。每完成一次任务，系统的当前状态都会随之更新，并可能产生新的待执行任务。因此，整个过程可以视为一个\textbf{动态任务集上的在线路径规划问题}。
+
+具体而言，完成 A 类扫描后，部分频道会被标记为已发现，并根据第二问的计算结果生成相应的 B 类扫描航点；完成 B 类扫描后，根据交会定位区域的大小，可能生成光学定位与清除任务，也可能继续生成新的补测任务。当机器狗在执行 B/C 类扫描或清除任务的过程中进入外围扫描区域时，还可能触发新的 A 类扫描。因此，任务集合会随探测结果不断变化，可表示为
+\[
+\mathcal{T}_{k+1}
+=
+F\left(\mathcal{T}_k,s_k\right),
+\]
+其中，$\mathcal{T}_k$ 表示第 $k$ 次决策时的待执行任务集，$s_k$ 表示本次扫描或清除所获得的新信息。
+
+由于扫描次数已经通过前述定位策略得到尽可能的压缩，而单次检测时间和清除时间基本固定，因此后续最主要的优化空间集中在机器狗的移动距离上。本文将当前所有待执行任务统一视为航点，并以总路径长度最短为主要优化目标：
+\[
+\min L
+=
+\sum_{i=0}^{n-1}
+d\left(P_i,P_{i+1}\right),
+\]
+其中，$P_i$ 表示机器狗访问的第 $i$ 个航点，$d(P_i,P_{i+1})$ 表示相邻航点之间的欧氏距离。
+
+具体采用\textbf{最近邻与 2-opt 相结合的在线滚动重规划策略}。首先从机器狗当前位置出发，利用最近邻贪心算法生成一条初始路径，即每次优先选择距离当前位置最近的未完成航点；随后采用 2-opt 算法对初始路径进行局部边交换，以减少路径交叉和不必要的折返。
+
+程序并不一次执行完整的规划路径，而是仅执行当前规划结果中的下一个航点。完成该任务后，根据新获得的测量信息或清除结果更新任务集合，并重新规划下一步。具体而言，程序将第二检测点、补充测向点、清除点和外围扫描点统一加入航点池，再通过最近邻和 2-opt 算法进行在线重规划。
+
+本文没有采用经典动态规划方法。这是因为待执行任务的数量和位置会随着机器狗的运行不断变化，难以在任务开始时预先获得完整且固定的状态空间。相比之下，滚动式启发算法能够根据实时获得的信息快速更新路线，更适合本问题的在线决策场景。程序中的路径规划函数同样先利用最近邻算法构造初始访问顺序，再通过 2-opt 进行局部优化，从而在较低计算复杂度下获得较短的运动路径。
+
+\subsubsection{简单容错机制}
+程序还设置了简单的容错机制，以避免单次测量异常导致任务中断。具体处理方式如下：
+
+\begin{enumerate}
+    \item 当检测结果为 \texttt{near} 时，表示机器狗与干扰源的距离不超过 $5\,\mathrm{m}$。此时直接在当前位置执行清除；若清除失败，则在周围半径为 $40\,\mathrm{m}$ 的圆周上沿 $8$ 个方向进行搜索，并再次尝试清除。
+
+    \item 当第二检测点返回 \texttt{no\_signal} 时，根据当前估计位置重新选择补测点；若补测次数超过 $6$ 次，则撤销当前定位任务，并将该频道重新交回扫描流程。
+
+    \item 当多次补测后仍无法实现精确定位时，撤销当前在途任务，转向距离目标估计位置最近的黄区扫描点，并在该扫描点重新进行检测。
+\end{enumerate}
+
+通过上述容错机制，当出现测量失败、定位结果不稳定或目标距离估计偏差较大等情况时，程序能够自动调整后续任务，无须中断整个搜索与清除过程。
 
 \subsection{模型求解}
+\begin{table}[htbp]
+    \centering
+    \caption{问题3正式测试结果}
+    \renewcommand{\arraystretch}{1.6}
+    \begin{tabular}{|c|c|c|c|}
+        \hline
+        测试案例编码 & 清除干扰源个数 & 平均定位清除时间 & 程序运行时间 \\
+        \hline
+        测试1案例编码 & 11 & 347.5 s/个 & 1.0 s \\
+        \hline
+        测试2案例编码 & 13 & 300.4 s/个 & 0.9 s \\
+        \hline
+        测试3案例编码 & 15 & 257.6 s/个 & 0.9 s \\
+        \hline
+    \end{tabular}
+\end{table}
 
+在三次正式测试中，机器狗分别清除了 $11$、$13$ 和 $15$ 个干扰源，平均每个干扰源定位清除时间分别为 $347.5\,\mathrm{s}$、$300.4\,\mathrm{s}$ 和 $257.6\,\mathrm{s}$，对应的定位清除总时间分别为 $3822.7\,\mathrm{s}$、$3904.9\,\mathrm{s}$ 和 $3864.2\,\mathrm{s}$。多次演练及正式测试结果表明，该策略均能完成全部干扰源的搜索与清除，且总任务时间波动较小，未出现明显异常结果，说明该策略具有较好的完整性和稳定性。
 
+随着干扰源数量的增加，平均定位清除时间呈现一定的下降趋势。这可能是因为全区域覆盖所需的外围扫描具有一定的固定开销，而在多目标场景下，不同目标的扫描、补测和清除任务能够共享部分移动路径，使固定开销由更多目标共同分担。同时，任务合并与在线滚动重规划能够减少重复移动和大范围折返，说明本文所采用的路径规划策略具有较好的优化效果。
 
+三次测试的程序运行时间均不超过 $1\,\mathrm{s}$，远小于实际任务执行时间，表明该算法的计算开销较低，能够满足实时决策的需求。
 
 
 
@@ -896,13 +1540,7 @@ x\in[-760,-220]\cup[220,760]\,\mathrm{m}.
 
 
 
-\newpage
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\section{模型的分析与检验}
 
-\subsection{灵敏度分析}
-
-\subsection{误差分析}
 
 
 
